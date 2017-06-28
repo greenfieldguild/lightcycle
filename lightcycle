@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+import boto3
+import botocore.exceptions
+import click
+import colorama
+import pytf.dsl
+import shutil
+import subprocess
+import tempfile
+
+## Meh-driven development is the wave of the future. I defy you to prove me wrong.
+def meh(*args, **kwargs):
+  click.echo("MEH:\t"+repr(args)+" "+repr(kwargs))
+
+def header(s):
+  click.secho("\n# "+s+" #", bold=True)
+
+def fail(string,code=1):
+  click.echo(string)
+  exit(code)
+
+
+
+@click.group(invoke_without_command=True)
+@click.pass_context
+def cli(ctx):
+  banner = "Starting lightcycle "
+  if ctx.invoked_subcommand is None:
+    click.echo(banner)
+    status()
+  else:
+    click.echo(banner+ctx.invoked_subcommand)
+
+#@cli.command()
+def status():
+  """Show status of this lightcycle setup"""
+  meh("status","collect status info")
+  has_init = False
+  if not has_init:
+    click.echo("Not in a lightcycle installation. Run 'lightcycle init' to connect to (or create) one.")
+    exit()
+  endpoints = []
+  if len(endpoints) == 0:
+    click.echo("No endpoints found. Run 'lightcycle create' to build your first one.")
+    exit()
+  meh("status","display endpoint info")
+  # for loop on endpoints
+    # list basic status info
+    # list clusters
+  fail("Lots of MEH here")
+
+@cli.command()
+@click.option("--org", prompt="Org", help="Organization short name")
+#@click.option("--backend", default="s3", help="Backend to use (currently only s3)")
+@click.option("--path", default="", help="Path to lightcycle shared store")
+@click.option("--region", default="us-east-1", help="AWS region for shared resources")
+@click.option("--table", default="", help="Shared DynamoDB table for locking")
+#@click.option("--force", is_flag=True, default=False, help="Force a reinitialization (DANGEROUS)")
+def init(**args):
+  """Create the shared organizational config"""
+  if args["path"] == "":
+    args["path"] = args["org"]+"-lightcycle"
+  if args["table"] == "":
+    args["table"] = args["path"].replace("/","_")
+  bucket, _, path = args["path"].partition("/")
+  org = pytf.dsl.TerraformDsl()
+
+  header("Ensure path is available")
+  click.echo("path= "+args["path"])
+  existing_bucket = None
+  s3 = boto3.client("s3")
+  try:
+    objs = s3.list_objects_v2(Bucket=bucket, Prefix=path)
+    existing_bucket = bucket
+    if "Contents" in objs:
+      fail("Tried using "+args["path"]+" but its already in use.")
+  except botocore.exceptions.ClientError as err:
+    if err.response["Error"]["Code"] != "NoSuchBucket":
+      fail("Tried using "+bucket+" but received: "+str(err))
+    click.echo(bucket+" bucket not found, building it.")
+
+  # template out org terraform
+  org.provider("aws", region = args["region"])
+  if not existing_bucket:
+    org.resource("aws_s3_bucket","org",
+      bucket = bucket,
+    )
+  org.resource("aws_dynamodb_table","org",
+    name = args["table"],
+    hash_key = "LockID",
+    attribute = [{
+      "name": "LockID",
+      "type": "S",
+    }],
+    read_capacity = 10,
+    write_capacity = 10,
+  )
+  tmpd = tempfile.mkdtemp()
+  meh(tmpd)
+
+  # run terraform
+  orgf = open(tmpd + "/org.tf","w")
+  orgf.write(org.json())
+  orgf.close()
+  result = subprocess.run(["terraform","init"], cwd=tmpd)
+  if result.returncode != 0:
+    fail("terraform init", result)
+  result = subprocess.run(["terraform","apply"], cwd=tmpd)
+  if result.returncode != 0:
+    fail("terraform apply", result)
+
+  # update org terraform to include remote store
+  org.terraform(
+    backend = {
+      "s3": {
+        "bucket":         bucket,
+        "key":            path + "/org.tfstate",
+        "dynamodb_table": args["table"],
+        "region":         args["region"],
+      }
+    }
+  )
+  org.output("org", value = args["org"])
+  org.output("path", value = args["path"])
+  org.output("region", value = args["region"])
+  org.output("table", value = args["table"])
+  # rerun terraform
+  orgf = open(tmpd + "/org.tf","w")
+  orgf.write(org.json())
+  orgf.close()
+  result = subprocess.run(["terraform","init","-force-copy"], cwd=tmpd)
+  if result.returncode != 0:
+    fail("terraform init", result)
+  result = subprocess.run(["terraform","apply"], cwd=tmpd)
+  if result.returncode != 0:
+    fail("terraform apply", result)
+
+  # cleanup temp dir
+  shutil.rmtree(tmpd)
+
+  click.echo("Created lightcycle installation at "+args["path"])
+  fail("Lots of MEH here")
+
+@cli.command()
+#@click.option("--backend", default="s3", help="Backend to use (currently only s3)")
+@click.option("--path", default="", help="Path to lightcycle shared store")
+@click.option("--force", is_flag=True, default=False, help="Overwrite existing local config")
+def connect(**args):
+  """Set up local configuration"""
+  meh("connect", **args)
+  #click.echo("Set up local configuration from "+args["path"])
+  fail("Lots of MEH here")
+
+@cli.command()
+def create(**args):
+  """Create a lightcycle endpoint"""
+  meh("create", **args)
+  fail("Lots of MEH here")
+
+@cli.command()
+def launch(**args):
+  """Launch a lightcycle cluster"""
+  meh("launch", **args)
+  fail("Lots of MEH here")
+
+@cli.command()
+def promote(**args):
+  """Promote a lightcycle cluster"""
+  meh("promote", **args)
+  fail("Lots of MEH here")
+
+@cli.command()
+def prune(**args):
+  """Remove lightcycle cluster(s)"""
+  meh("prune", **args)
+  fail("Lots of MEH here")
+
+@cli.command()
+def destroy(**args):
+  """Remove lightcycle endpoint or shared config"""
+  meh("prune", **args)
+  fail("Lots of MEH here")
+
+if __name__ == '__main__':
+  cli()
