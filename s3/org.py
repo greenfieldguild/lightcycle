@@ -9,12 +9,16 @@ from lightcycle.meh import meh
 
 class Organization():
   def __init__(self, name='', path='', region='us-east-1'):
-    root, _, subpath = path.partition("/")
     self.name = name
-    self.root = root
     self.path = path
     self.region = region
     return
+
+  def root(self):
+    return self.path.partition("/")[0]
+
+  def subpath(self):
+    return self.path.partition("/")[2]
 
   def load(self):
     meh("Should load from remote store here")
@@ -30,23 +34,23 @@ class Organization():
     '''
     # Is the requested DynamoDB path occupied?
     try:
-      lockID = self.root+"/"+self.path+"/org.tfstate-md5"
-      if "Item" in boto3.client("dynamodb").get_item(TableName=self.root,Key={"LockID":{"S":lockID}}):
-        raise Exception("dynamdob://"+self.root+"/"+lockID+" is already in use.")
+      lockID = self.root()+"/"+self.subpath()+"/org.tfstate-md5"
+      if "Item" in boto3.client("dynamodb").get_item(TableName=self.root(),Key={"LockID":{"S":lockID}}):
+        raise Exception("dynamdob://"+self.root()+"/"+lockID+" is already in use.")
     except botocore.exceptions.ClientError as err:
       if err.response["Error"]["Code"] != "ResourceNotFoundException":
-        raise Exception("Tried using "+self.root+" but received: "+str(err))
+        raise Exception("Tried using "+self.root()+" but received: "+str(err))
     # Is the requested S3 path occupied?
     try:
-      if "Contents" in boto3.client("s3").list_objects_v2(Bucket=self.root, Prefix=self.path):
-        raise Exception("s3://"+self.root+"/"+self.path+" is already in use.")
+      if "Contents" in boto3.client("s3").list_objects_v2(Bucket=self.root(), Prefix=self.subpath()):
+        raise Exception("s3://"+self.root()+"/"+self.subpath()+" is already in use.")
     except botocore.exceptions.ClientError as err:
       if err.response["Error"]["Code"] != "NoSuchBucket":
-        raise Exception("Tried using "+self.root+" but received: "+str(err))
+        raise Exception("Tried using "+self.root()+" but received: "+str(err))
 
   def bucket_exists(self):
     try:
-      boto3.resource("s3").Bucket(self.root).load()
+      boto3.resource("s3").Bucket(self.root()).load()
       return True
     except botocore.exceptions.ClientError as err:
       if err.response["Error"]["Message"] == "NotFound":
@@ -55,7 +59,7 @@ class Organization():
 
   def table_exists(self):
     try:
-      boto3.resource("dynamodb").Table(self.root).load()
+      boto3.resource("dynamodb").Table(self.root()).load()
       return True
     except botocore.exceptions.ClientError as err:
       if err.response["Error"]["Code"] == "ResourceNotFoundException":
@@ -67,13 +71,13 @@ class Organization():
     # template out org terraform
     tf = dsl.TerraformDsl()
     tf.provider("aws", region = self.region)
-    if not self.root_exists():
+    if not self.bucket_exists():
       tf.resource("aws_s3_bucket","org",
-        bucket = self.root,
+        bucket = self.root(),
       )
-    if not self.root_exists():
+    if not self.table_exists():
       tf.resource("aws_dynamodb_table","org",
-        name = self.root,
+        name = self.root(),
         hash_key = "LockID",
         attribute = [{
           "name": "LockID",
@@ -99,17 +103,17 @@ class Organization():
     tf.terraform(
       backend = {
         "s3": {
-          "bucket":         self.root,
-          "key":            self.path + "/org.tfstate",
-          "dynamodb_table": self.root,
+          "bucket":         self.root(),
+          "key":            self.subpath() + "/org.tfstate",
+          "dynamodb_table": self.root(),
           "region":         self.region,
         }
       }
     )
     tf.output("org", value = self.name)
-    tf.output("path", value = self.path)
+    tf.output("path", value = self.subpath())
     tf.output("region", value = self.region)
-    tf.output("table", value = self.root)
+    tf.output("table", value = self.root())
     # rerun terraform
     orgf = open(tmpd + "/org.tf","w")
     orgf.write(tf.json())

@@ -60,7 +60,7 @@ def status(ctx, org):
 @click.option("--path", default="", help="Path to lightcycle shared store")
 @click.option("--region", default="us-east-1", help="AWS region for shared resources")
 #@click.option("--force", is_flag=True, default=False, help="Force a reinitialization (DANGEROUS)")
-def init(org, path, region):
+def init(org, path, region="us-east-1"):
   """Create the shared organizational config"""
   path = path if path else org+"-lightcycle"
   org = lightcycle.s3.org.Organization(
