@@ -6,14 +6,10 @@ import boto3
 import botocore.exceptions
 import click
 import colorama
-import lightcycle.pytf.dsl
-import shutil
-import subprocess
-import tempfile
-
-## Meh-driven development is the wave of the future. I defy you to prove me wrong.
-def meh(*args, **kwargs):
-  click.echo("MEH:\t"+repr(args)+" "+repr(kwargs))
+import configparser
+from lightcycle.meh import meh
+import lightcycle.s3.org
+import os
 
 def header(s):
   click.secho("\n# "+s+" #", bold=True)
@@ -22,25 +18,31 @@ def fail(string,code=1):
   click.echo(string)
   exit(code)
 
-
-
-@click.group(invoke_without_command=True)
+@click.group()
 @click.pass_context
 def cli(ctx):
-  banner = "Starting lightcycle "
-  if ctx.invoked_subcommand is None:
-    click.echo(banner)
-    status()
-  else:
-    click.echo(banner+ctx.invoked_subcommand)
+  config = configparser.ConfigParser()
+  config.read(os.path.join(click.get_app_dir("lightcycle"),"org.ini"))
+  ctx.obj = config
+  header("Starting lightcycle "+ctx.invoked_subcommand)
 
-#@cli.command()
-def status():
+@cli.command()
+@click.option("--org", default=False, help="Organization short name")
+@click.pass_context
+def status(ctx, org):
   """Show status of this lightcycle setup"""
+  if not org:
+    if not "default" in ctx.obj["orgs"]:
+      fail("No --org supplied and no default in config, cannot continue")
+    org = ctx.obj["orgs"]["default"]
+  if not org in ctx.obj["orgs"]:
+    fail("Org name "+org+" is not in config, run 'lightcycle config' to configure an existing one, or 'lightcycle init' to create a new one")
+  path = ctx.obj["orgs"][org]
+  meh("Look for org config at "+path)
   meh("status","collect status info")
   has_init = False
   if not has_init:
-    click.echo("Not in a lightcycle installation. Run 'lightcycle init' to connect to (or create) one.")
+    #click.echo("Not in a lightcycle installation. Run 'lightcycle init' to connect to (or create) one.")
     exit()
   endpoints = []
   if len(endpoints) == 0:
@@ -59,99 +61,44 @@ def status():
 @click.option("--region", default="us-east-1", help="AWS region for shared resources")
 @click.option("--table", default="", help="Shared DynamoDB table for locking")
 #@click.option("--force", is_flag=True, default=False, help="Force a reinitialization (DANGEROUS)")
-def init(**args):
+def init(org, path, region, table):
   """Create the shared organizational config"""
-  if args["path"] == "":
-    args["path"] = args["org"]+"-lightcycle"
-  if args["table"] == "":
-    args["table"] = args["path"].replace("/","_")
-  bucket, _, path = args["path"].partition("/")
-
-  header("Ensure path is available")
-  click.echo("path= "+args["path"])
-  existing_bucket = None
-  s3 = boto3.client("s3")
+  path = path if path else org+"-lightcycle"
+  bucket, _, subpath = path.partition("/")
+  table = table if table else bucket
+  org = lightcycle.s3.org.Organization(
+    name = org,
+    bucket = bucket,
+    path = subpath,
+    table = table,
+    region = region,
+  )
+  header("Setting up "+org.name)
   try:
-    objs = s3.list_objects_v2(Bucket=bucket, Prefix=path)
-    existing_bucket = bucket
-    if "Contents" in objs:
-      fail("Tried using "+args["path"]+" but its already in use.")
-  except botocore.exceptions.ClientError as err:
-    if err.response["Error"]["Code"] != "NoSuchBucket":
-      fail("Tried using "+bucket+" but received: "+str(err))
-    click.echo(bucket+" bucket not found, building it.")
-
-  # template out org terraform
-  org = lightcycle.pytf.dsl.TerraformDsl()
-  org.provider("aws", region = args["region"])
-  if not existing_bucket:
-    org.resource("aws_s3_bucket","org",
-      bucket = bucket,
-    )
-  org.resource("aws_dynamodb_table","org",
-    name = args["table"],
-    hash_key = "LockID",
-    attribute = [{
-      "name": "LockID",
-      "type": "S",
-    }],
-    read_capacity = 10,
-    write_capacity = 10,
-  )
-  tmpd = tempfile.mkdtemp()
-  meh(tmpd)
-
-  # run terraform
-  orgf = open(tmpd + "/org.tf","w")
-  orgf.write(org.json())
-  orgf.close()
-  result = subprocess.run(["terraform","init"], cwd=tmpd)
-  if result.returncode != 0:
-    fail("terraform init", result)
-  result = subprocess.run(["terraform","apply"], cwd=tmpd)
-  if result.returncode != 0:
-    fail("terraform apply", result)
-
-  # update org terraform to include remote store
-  org.terraform(
-    backend = {
-      "s3": {
-        "bucket":         bucket,
-        "key":            path + "/org.tfstate",
-        "dynamodb_table": args["table"],
-        "region":         args["region"],
-      }
-    }
-  )
-  org.output("org", value = args["org"])
-  org.output("path", value = args["path"])
-  org.output("region", value = args["region"])
-  org.output("table", value = args["table"])
-  # rerun terraform
-  orgf = open(tmpd + "/org.tf","w")
-  orgf.write(org.json())
-  orgf.close()
-  result = subprocess.run(["terraform","init","-force-copy"], cwd=tmpd)
-  if result.returncode != 0:
-    fail("terraform init", result)
-  result = subprocess.run(["terraform","apply"], cwd=tmpd)
-  if result.returncode != 0:
-    fail("terraform apply", result)
-
-  # cleanup temp dir
-  shutil.rmtree(tmpd)
-
-  click.echo("Created lightcycle installation at "+args["path"])
+    org.create()
+    org.config()
+    click.echo("Created lightcycle installation at "+org.path)
+  except Exception as err:
+    fail(str(err))
   fail("Lots of MEH here")
 
 @cli.command()
+@click.option("--org", prompt="Org", help="Organization short name")
 #@click.option("--backend", default="s3", help="Backend to use (currently only s3)")
 @click.option("--path", default="", help="Path to lightcycle shared store")
 @click.option("--force", is_flag=True, default=False, help="Overwrite existing local config")
-def connect(**args):
+def config(org,path,force):
   """Set up local configuration"""
-  meh("connect", **args)
-  #click.echo("Set up local configuration from "+args["path"])
+  path = path if path else org+"-lightcycle"
+  bucket, _, subpath = path.partition("/")
+  org = lightcycle.s3.org.Organization(
+    name = org,
+    bucket = bucket,
+    path = subpath,
+  )
+  org.load()
+  org.config()
+  click.echo("Set up local configuration from "+path)
   fail("Lots of MEH here")
 
 @cli.command()
