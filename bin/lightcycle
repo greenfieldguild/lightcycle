@@ -7,16 +7,12 @@ import botocore.exceptions
 import click
 import colorama
 import configparser
-from lightcycle.meh import meh
+from lightcycle.meh import meh,fail
 import lightcycle.s3.org
 import os
 
 def header(s):
   click.secho("\n# "+s+" #", bold=True)
-
-def fail(string,code=1):
-  click.echo(string)
-  exit(code)
 
 @click.group()
 @click.pass_context
@@ -27,9 +23,9 @@ def cli(ctx):
   header("Starting lightcycle "+ctx.invoked_subcommand)
 
 @cli.command()
-@click.option("--org", default=False, help="Organization short name")
+@click.option("--org", help="Organization short name")
 @click.pass_context
-def status(ctx, org):
+def status(ctx, org=""):
   """Show status of this lightcycle setup"""
   if not org:
     if not "default" in ctx.obj["orgs"]:
@@ -38,11 +34,16 @@ def status(ctx, org):
   if not org in ctx.obj["orgs"]:
     fail("Org name "+org+" is not in config, run 'lightcycle config' to configure an existing one, or 'lightcycle init' to create a new one")
   path = ctx.obj["orgs"][org]
-  meh("Look for org config at "+path)
+  organization = lightcycle.s3.org.Organization(
+    name = org,
+    path = path,
+  )
+  organization.load()
   meh("status","collect status info")
-  has_init = False
-  if not has_init:
-    #click.echo("Not in a lightcycle installation. Run 'lightcycle init' to connect to (or create) one.")
+  has_config = False
+  meh("Look for org config at "+path)
+  if not has_config:
+    click.echo("No lightcycle installation at "+path+". Run 'lightcycle init' to create one.")
     exit()
   endpoints = []
   if len(endpoints) == 0:
@@ -56,33 +57,33 @@ def status(ctx, org):
 
 @cli.command()
 @click.option("--org", prompt="Org", help="Organization short name")
-#@click.option("--backend", default="s3", help="Backend to use (currently only s3)")
-@click.option("--path", default="", help="Path to lightcycle shared store")
-@click.option("--region", default="us-east-1", help="AWS region for shared resources")
+#@click.option("--backend", help="Backend to use (currently only s3)")
 #@click.option("--force", is_flag=True, default=False, help="Force a reinitialization (DANGEROUS)")
-def init(org, path, region="us-east-1"):
+@click.option("--path", help="Path to lightcycle shared store")
+@click.option("--region", help="AWS region for shared resources")
+def init(org, backend="s3", force=False, path="", region="us-east-1"):
   """Create the shared organizational config"""
   path = path if path else org+"-lightcycle"
-  org = lightcycle.s3.org.Organization(
+  organization = lightcycle.s3.org.Organization(
     name = org,
     path = path,
     region = region,
   )
-  header("Setting up "+org.name)
+  header("Setting up "+organization.name)
   try:
-    org.create()
-    org.config()
-    click.echo("Created lightcycle installation at "+org.path)
+    organization.create()
+    organization.config()
+    click.echo("Created lightcycle installation at "+organization.path)
   except Exception as err:
     fail(str(err))
   fail("Lots of MEH here")
 
 @cli.command()
 @click.option("--org", prompt="Org", help="Organization short name")
-#@click.option("--backend", default="s3", help="Backend to use (currently only s3)")
-@click.option("--path", default="", help="Path to lightcycle shared store")
-@click.option("--force", is_flag=True, default=False, help="Overwrite existing local config")
-def config(org,path,force):
+#@click.option("--backend", help="Backend to use (currently only s3)")
+@click.option("--force", is_flag=True, help="Overwrite existing local config")
+@click.option("--path", help="Path to lightcycle shared store")
+def config(org, backend="s3", force=False, path=""):
   """Set up local configuration"""
   path = path if path else org+"-lightcycle"
   bucket, _, subpath = path.partition("/")
