@@ -1,131 +1,99 @@
 #!/usr/bin/env python3
+# FIXME: http://marthall.github.io/blog/how-to-package-a-python-app/
 import sys
-sys.path.insert(0,"/home/temujin9/Projects/Greenfield_Guild/code/")
+sys.path.insert(0,"/home/temujin9/Projects/Greenfield_Guild/code/") # HACK
 
 import boto3
 import botocore.exceptions
 import click
 import colorama
-import configparser
+import json
 from lightcycle.meh import meh,fail
-import lightcycle.s3.org
+from lightcycle.s3.endpoint import Endpoint
 import os
 
 def header(s):
   click.secho("\n# "+s+" #", bold=True)
 
 @click.group()
+def cli():
+  pass
+
+@cli.command()
+@click.option("-e", "--endpoint", help="Endpoint name")
+def create(endpoint="", **args):
+  """Launch a new cluster"""
+  ept = Endpoint.load_local(endpoint)
+  cluster = ept.new_cluster()
+
+def default_org():
+  return os.environ["LIGHTCYCLE_ORG"] if "LIGHTCYCLE_ORG" in os.environ else None
+
+def default_endpoint():
+  return os.environ["LIGHTCYCLE_ENDPOINT"] if "LIGHTCYCLE_ENDPOINT" in os.environ else "sandbox"
+
 @click.pass_context
-def cli(ctx):
-  config = configparser.ConfigParser()
-  config.read(os.path.join(click.get_app_dir("lightcycle"),"org.ini"))
-  ctx.obj = config
-  header("Starting lightcycle "+ctx.invoked_subcommand)
+def default_path(ctx):
+  if "LIGHTCYCLE_PATH" in os.environ: return os.environ["LIGHTCYCLE_PATH"]
+  if not ctx.params["org"]: ctx.params["org"] = click.prompt("Org prefix",default="")
+  if ctx.params["org"]: return "s3://"+ctx.params["org"]+"-lightcycle/"+ctx.params["endpoint"]
+  return ""
+
+def validate_path(ctx,param,value):
+  if not (value or default_path()): fail("Please specify at least one of --org or --path")
+  return value
 
 @cli.command()
-@click.option("--org", help="Organization short name")
-@click.pass_context
-def status(ctx, org=""):
-  """Show status of this lightcycle setup"""
-  if not org:
-    if not "default" in ctx.obj["orgs"]:
-      fail("No --org supplied and no default in config, cannot continue")
-    org = ctx.obj["orgs"]["default"]
-  if not org in ctx.obj["orgs"]:
-    fail("Org name "+org+" is not in config, run 'lightcycle config' to configure an existing one, or 'lightcycle init' to create a new one")
-  path = ctx.obj["orgs"][org]
-  organization = lightcycle.s3.org.Organization(
-    name = org,
-    path = path,
-  )
-  organization.load()
-  meh("status","collect status info")
-  has_config = False
-  meh("Look for org config at "+path)
-  if not has_config:
-    click.echo("No lightcycle installation at "+path+". Run 'lightcycle init' to create one.")
-    exit()
-  endpoints = []
-  if len(endpoints) == 0:
-    click.echo("No endpoints found. Run 'lightcycle create' to build your first one.")
-    exit()
-  meh("status","display endpoint info")
-  # for loop on endpoints
-    # list basic status info
-    # list clusters
-  fail("Lots of MEH here")
+@click.option("-o", "--org", is_eager=True, default=default_org, help="Organization prefix")
+@click.option("-e", "--endpoint", is_eager=True, default=default_endpoint, help="Endpoint name")
+@click.option("-p","--path", callback=validate_path, help="Backend path")
+def connect(org="", endpoint="sandbox", path=""):
+  """Configure connection to an existing endpoint"""
+  path = path if path else default_path()
+  ept = Endpoint(endpoint, path)
+  ept.verify_remote()
+  ept.write_local()
+  click.echo("Connected to "+endpoint+" endpoint at "+path)
 
 @cli.command()
-@click.option("--org", prompt="Org", help="Organization short name")
-#@click.option("--backend", help="Backend to use (currently only s3)")
-#@click.option("--force", is_flag=True, default=False, help="Force a reinitialization (DANGEROUS)")
-@click.option("--path", help="Path to lightcycle shared store")
-@click.option("--region", help="AWS region for shared resources")
-def init(org, backend="s3", force=False, path="", region="us-east-1"):
-  """Create the shared organizational config"""
-  path = path if path else org+"-lightcycle"
-  organization = lightcycle.s3.org.Organization(
-    name = org,
-    path = path,
-    region = region,
-  )
-  header("Setting up "+organization.name)
-  try:
-    organization.create()
-    organization.config()
-    click.echo("Created lightcycle installation at "+organization.path)
-  except Exception as err:
-    fail(str(err))
-  fail("Lots of MEH here")
-
-@cli.command()
-@click.option("--org", prompt="Org", help="Organization short name")
-#@click.option("--backend", help="Backend to use (currently only s3)")
-@click.option("--force", is_flag=True, help="Overwrite existing local config")
-@click.option("--path", help="Path to lightcycle shared store")
-def config(org, backend="s3", force=False, path=""):
-  """Set up local configuration"""
-  path = path if path else org+"-lightcycle"
-  bucket, _, subpath = path.partition("/")
-  org = lightcycle.s3.org.Organization(
-    name = org,
-    bucket = bucket,
-    path = subpath,
-  )
-  org.load()
-  org.config()
-  click.echo("Set up local configuration from "+path)
-  fail("Lots of MEH here")
-
-@cli.command()
-def create(**args):
-  """Create a lightcycle endpoint"""
-  meh("create", **args)
-  fail("Lots of MEH here")
-
-@cli.command()
-def launch(**args):
-  """Launch a lightcycle cluster"""
-  meh("launch", **args)
-  fail("Lots of MEH here")
-
-@cli.command()
-def promote(**args):
-  """Promote a lightcycle cluster"""
-  meh("promote", **args)
-  fail("Lots of MEH here")
-
-@cli.command()
-def prune(**args):
-  """Remove lightcycle cluster(s)"""
-  meh("prune", **args)
-  fail("Lots of MEH here")
-
-@cli.command()
+@click.option("-e", "--endpoint", help="Endpoint name")
 def destroy(**args):
-  """Remove lightcycle endpoint or shared config"""
-  meh("prune", **args)
-  fail("Lots of MEH here")
+  """Destroy an unused cluster"""
+  meh("destroy", **args)
+
+@cli.command()
+@click.option("-o", "--org", is_eager=True, default=default_org, help="Organization prefix")
+@click.option("-e", "--endpoint", is_eager=True, default=default_endpoint, help="Endpoint name")
+@click.option("-p","--path", prompt="Backend path", default=default_path, callback=validate_path, help="Backend path")
+@click.option("--default", is_flag=True, help="Make this the default endpoint")
+@click.option("--force", is_flag=True, help="Force a reinitialization (DANGEROUS)")
+def init(org="", endpoint="sandbox", default=False, force=False):
+  """Initialize a new endpoint"""
+  header("Initializing the "+endpoint+" endpoint")
+  ept = Endpoint(endpoint, path)
+  ept.backend.ensure(force)
+  ept.write_remote()
+  ept.write_local(default)
+  ept.tf_apply()
+
+@cli.command()
+@click.option("-e", "--endpoint", help="Endpoint name")
+def promote(**args):
+  """Promote a cluster"""
+  meh("promote", args)
+
+@cli.command()
+@click.option("-a", "--all", "show_all", is_flag=True, help="Show status from all endpoints")
+@click.option("-e", "--endpoint", help="Endpoint name")
+def status(show_all=False, endpoint=""):
+  """Show state of lightcycle endpoint(s)"""
+  epts = []
+  if show_all:
+    meh("load endpoints")
+  else:
+    epts = [ Endpoint.load_local(endpoint) ]
+  for ept in epts:
+    meh("status", ept)
 
 if __name__ == '__main__':
   cli()
