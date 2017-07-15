@@ -9,7 +9,7 @@ import click
 import colorama
 import json
 from lightcycle.meh import meh,fail
-from lightcycle.s3.endpoint import Endpoint
+from lightcycle.aws.endpoint import Endpoint
 import os
 
 def header(s):
