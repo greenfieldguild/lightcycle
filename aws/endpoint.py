@@ -8,14 +8,113 @@ import shutil
 import subprocess
 import tempfile
 
+from datetime import datetime
+import json
+
+
+class Cluster():
+  def new(endpoint):
+    # Compact, alphanumeric format of ISO 8601, for maximum usability (re: acceptable character sets)
+    timestamp = datetime.now().replace(microsecond=0).isoformat().replace("-","").replace(":","")
+    return Cluster(endpoint, timestamp)
+
+  def __init__(self, endpoint, timestamp):
+    self.endpoint = endpoint
+    self.timestamp = timestamp
+    self.az = "us-east-1a" # HACK
+    self.region = "us-east-1" # HACK
+
+  def launch(self):
+    meh("launch",vars(self))
+    remote = TerraformModule()
+    cluster = lightcycle.pytf.dsl.TerraformDsl()
+    cluster.variable(self.timestamp+"-live", default = "true")
+    cluster.resource("aws_security_group",self.timestamp,
+      name = self.endpoint.name+"-"+self.timestamp,
+      ingress = [{
+        "from_port": 22, #HACK
+        "to_port": 22,
+        "protocol": "tcp",
+        "cidr_blocks": ["0.0.0.0/0"],   #HACK
+      }],
+    )
+    meh("aws_launch_configuration not working yet")
+    cluster.resource("aws_launch_configuration", self.timestamp,
+      name = self.endpoint.name+"-"+self.timestamp,
+
+      image_id = "ami-a10d9db7", # HACK
+      instance_type = "r3.large", # HACK
+      key_name = "temujin9", # HACK
+      security_groups = [ "${aws_security_group."+self.timestamp+".name}" ],
+
+      user_data = '''
+        #!/bin/env python3
+        import urllib.request
+
+        def meh(*args):
+          print("MEH: "+str(args))
+
+        installer="/tmp/install-flynn"
+        urllib.request.urlretrieve("https://dl.flynn.io/install-flynn",installer) # FIXME: This is the spot blocked by SG stuff?
+        print("retrieved installer")
+        meh("chmod +x $install")
+        result = subprocess.run([installer], cwd="/root")
+        meh("until successful")
+        meh("zpool device")
+        if result.returncode !=0: raise Exception(action, result)
+
+        meh("get initial peers from ASG")
+        initial_peers = ",".join([ "127.0.0.1" ])
+        result = subprocess.run(["flynn-host","init","--peer-ips",initial_peers], cwd="/root")
+        if result.returncode !=0: raise Exception(action, result)
+
+        result = subprocess.run(["systemctl","start","flynn-host"], cwd="/root")
+        if result.returncode !=0: raise Exception(action, result)
+      '''.replace("        ","").strip()+"\n",
+    )
+    cluster.resource("aws_autoscaling_group", self.timestamp,
+      availability_zones = [ self.az ],
+      name = self.endpoint.name+"-"+self.timestamp,
+      max_size = 0,
+      min_size = 0,
+      launch_configuration = "${aws_launch_configuration."+self.timestamp+".name}",
+    )
+    cluster.output(self.timestamp+"-asg",value = "${aws_autoscaling_group."+self.timestamp+".id}")
+    cluster.output(self.timestamp+"-live",value = "${var."+self.timestamp+"-live}")
+    remote.add(self.timestamp, cluster)
+    remote.upload(bucket=self.endpoint.root, prefix=self.endpoint.prefix)
+    self.endpoint.tf_apply()
+
 class Endpoint():
-  def __init__(self, name, path):
-    self.name = name
-    protocol,_,self.root,self.prefix = path.rstrip("/").split('/',3)
+  def load_local(name):
+    """Load Endpoint from local"""
+    if not name or name == "default":
+      default_config = os.path.join(click.get_app_dir("lightcycle"), "default")
+      _, name = os.readlink(default_config).rsplit('/',maxsplit=1)
+    ept_config = os.path.join(click.get_app_dir("lightcycle"), name)
+    if not os.path.isdir(ept_config):
+      raise Exception("Configuration not found for "+name+" endpoint; connect to it with 'lightcycle connect', or create it with 'lightcycle init'.")
+
+    jcfg = json.load(open(os.path.join(ept_config,"endpoint.tf.json")))
+    root = jcfg["terraform"]["backend"]["s3"]["bucket"]
+    prefix = jcfg["terraform"]["backend"]["s3"]["key"][:-len("/endpoint.tfstate")]
+    return Endpoint(name, root, prefix)
+
+  def from_path(name,path):
+    protocol,_,root,prefix = path.rstrip("/").split('/',3)
     if protocol != "s3:":
       raise Exception("Only equipped to do S3 at the moment")
+    return Endpoint(name, root, prefix)
+
+  def __init__(self, name, root, prefix):
+    self.name = name
+    self.root = root
+    self.prefix = prefix
     self.backend = Backend(self.root,self.prefix)
     self.region = "us-east-1" # HACK
+
+  def prepare_cluster(self):
+    return Cluster.new(self)
 
   def write_remote(self):
     """Create new Endpoint remote"""
@@ -24,7 +123,7 @@ class Endpoint():
     core.variable("remove", default = "")
     core.variable("promote", default = "")
     core.provider("aws", region = self.region)
-    #core.data("terraform_remote_state") # FIXME
+    #core.data("terraform_remote_state") # FIXME?
     core.output("live", value = "") # FIXME, should be TF for 'var.promote or previous value'
     remote.add("core", core)
 
@@ -87,16 +186,6 @@ class Endpoint():
     if not (lock and path):
       raise Exception("Remote not setup correctly: lock="+str(lock)+" path="+str(path))
 
-  def load_local(name):
-    """Load Endpoint from local"""
-    config_dir = click.get_app_dir("lightcycle")
-    if not name:
-      name = "default"
-    if not os.path.isdir(os.path.join(config_dir, name)):
-      raise Exception("Configuration not found for "+name+" endpoint; connect to it with 'lightcycle connect', or create it with 'lightcycle init'.")
-    meh("load config")
-    return meh("create endpoint object")
-
   def config(self):
     config = TerraformModule()
     config.directory = os.path.join(click.get_app_dir("lightcycle"), self.name)
@@ -107,7 +196,7 @@ class Endpoint():
       backend = {
         "s3": {
           "bucket":         self.root,
-          "key":            self.prefix+"/self.tfstate",
+          "key":            self.prefix+"/endpoint.tfstate",
           "dynamodb_table": self.root,
           "region":         self.region,
         }
@@ -167,9 +256,8 @@ class TerraformModule():
       f.close()
 
   def apply(self):
-    self.write()
-    actions = [ [ "terraform","init","-force-copy" ],
-                [ "terraform","get","-update=true" ],
+    actions = [ [ "terraform","get","-update=true" ],
+                [ "terraform","init","-force-copy" ],
                 [ "terraform","apply" ] ]
     for action in actions:
       result = subprocess.run(action, cwd=self.directory)
@@ -244,6 +332,7 @@ class Backend():
       module = TerraformModule()
       module.directory = tempfile.mkdtemp()
       module.add("backend", backend)
+      module.write()
       module.apply()
       backend.terraform(
         backend = {
@@ -258,6 +347,7 @@ class Backend():
       backend.output("root", value = self.root)
       backend.output("region", value = self.region)
       module.add("backend", backend)
+      module.write()
       module.apply()
       module.upload(bucket=self.root)
       shutil.rmtree(module.directory)

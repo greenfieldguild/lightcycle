@@ -7,7 +7,6 @@ import boto3
 import botocore.exceptions
 import click
 import colorama
-import json
 from lightcycle.meh import meh,fail
 from lightcycle.aws.endpoint import Endpoint
 import os
@@ -21,10 +20,11 @@ def cli():
 
 @cli.command()
 @click.option("-e", "--endpoint", help="Endpoint name")
-def create(endpoint="", **args):
+def create(endpoint="default"):
   """Launch a new cluster"""
   ept = Endpoint.load_local(endpoint)
-  cluster = ept.new_cluster()
+  cluster = ept.prepare_cluster()
+  cluster.launch()
 
 def default_org():
   return os.environ["LIGHTCYCLE_ORG"] if "LIGHTCYCLE_ORG" in os.environ else None
@@ -50,7 +50,7 @@ def validate_path(ctx,param,value):
 def connect(org="", endpoint="sandbox", path=""):
   """Configure connection to an existing endpoint"""
   path = path if path else default_path()
-  ept = Endpoint(endpoint, path)
+  ept = Endpoint.from_path(endpoint, path)
   ept.verify_remote()
   ept.write_local()
   click.echo("Connected to "+endpoint+" endpoint at "+path)
@@ -70,7 +70,7 @@ def destroy(**args):
 def init(org="", endpoint="sandbox", default=False, force=False):
   """Initialize a new endpoint"""
   header("Initializing the "+endpoint+" endpoint")
-  ept = Endpoint(endpoint, path)
+  ept = Endpoint.from_path(endpoint, path)
   ept.backend.ensure(force)
   ept.write_remote()
   ept.write_local(default)
