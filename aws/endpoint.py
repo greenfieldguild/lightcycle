@@ -37,6 +37,12 @@ class Cluster():
         "protocol": "tcp",
         "cidr_blocks": ["0.0.0.0/0"],   #HACK
       }],
+      egress = [{
+        "from_port": 0,
+        "to_port": 0,
+        "protocol": "-1",
+        "cidr_blocks": ["0.0.0.0/0"],
+      }],
     )
     meh("aws_launch_configuration not working yet")
     cluster.resource("aws_launch_configuration", self.timestamp,
