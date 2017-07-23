@@ -100,33 +100,27 @@ class Cluster():
         import subprocess
         import time
 
-        def meh(*args):
-          print("MEH: "+str(args))
+        def retry(tries=0, delay=60):
+          def tryIt(func):
+            def f(*args, **kwargs):
+              tried = 0
+              while True:
+                try:
+                  tried += 1
+                  return func(*args, **kwargs)
+                except Exception as e:
+                  if not tried < tries: raise e
+                  else: print("Tried {{0}} ({{1}} times), got: \\\"{{2}}\\\"".format(func.__name__,tried,e), flush=True)
+                  time.sleep(delay)
+            return f
+          return tryIt
 
-        def run_and_return(*args, cwd="/root"):
-          return ( subprocess.run(args, cwd=cwd).returncode == 0 )
-
-        def try_try_again(f, tries=0):
-          tried = 0
-          while True:
-            tried += 1
-            time.sleep(30)
-            try:
-              result = f()
-              if result:
-                return True
-              else:
-                raise Exception("Failed to {{0}} (tried {{1}} times)".format(args, tries))
-            except Exception as e:
-              if tries == tried:
-                raise e
-              print(e)
-
+        @retry(tries=10)
         def find_ip_addresses():
           boto3.setup_default_session(region_name="us-east-1")
           asg = boto3.client("autoscaling").describe_auto_scaling_groups(AutoScalingGroupNames=[name])["AutoScalingGroups"][0]
-          instances = [ i["InstanceId"] for i in asg["Instances"] ]
           ec2 = boto3.resource("ec2")
+          instances = [ i["InstanceId"] for i in asg["Instances"] ]
           addresses = [ ec2.Instance(i).private_ip_address for i in instances ]
           if len(addresses) > 1:
             return addresses
@@ -135,30 +129,34 @@ class Cluster():
           else:
             raise Exception("No addresses found . . . curious.")
 
+        @retry(tries=10)
+        def assert_run(*args, cwd="/root"):
+          returncode = subprocess.run(args, cwd=cwd).returncode
+          if returncode != 0: raise Exception("Tried {{0}}, returned {{1}}".format(args,returncode))
 
         name = "{name}"
 
         print("\\n\\n# Installing prerequisites #")
-        try_try_again(run_and_return("apt","install","python3-pip","--yes"))
-        try_try_again(run_and_return("pip3","install","boto3"))
+        assert_run("apt","install","python3-pip","--yes")
+        assert_run("pip3","install","boto3")
         import boto3
 
-        print("\\n\\n# Looking for other members of this cluster #")
-        addresses = try_try_again(find_ip_addresses())
-        print("Found: {{0}}".format(addresses))
+        print("\\n\\n# Looking for other members of this cluster #", flush=True)
+        addresses = find_ip_addresses()
+        print("Found: {{0}}".format(addresses), flush=True)
 
-        print("\\n\\n# Initializing cluster #")
-        try_try_again(run_and_return("flynn-host","init","--peer-ips",",".join(addresses)), tries=3)
-        try_try_again(run_and_return("systemctl","start","flynn-host"))
-        print("Initialized {{0}} cluster".format(name))
+        print("\\n\\n# Initializing cluster #", flush=True)
+        assert_run("flynn-host","init","--peer-ips",",".join(addresses))
+        assert_run("systemctl","start","flynn-host")
+        print("Initialized {{0}} cluster".format(name), flush=True)
       '''.format(name=name).replace("\n        ","\n").strip()+"\n", # Cleanup indenting
     )
     cluster.resource("aws_autoscaling_group", self.timestamp,
       name = name,
 
       availability_zones = [ self.az ],
-      max_size = 1,
-      min_size = 1,
+      max_size = 3,
+      min_size = 3,
       launch_configuration = "${aws_launch_configuration."+self.timestamp+".name}",
     )
     cluster.output(self.timestamp+"-asg",value = "${aws_autoscaling_group."+self.timestamp+".id}")
