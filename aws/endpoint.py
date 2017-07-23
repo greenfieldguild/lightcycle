@@ -25,12 +25,14 @@ class Cluster():
     self.region = "us-east-1" # HACK
 
   def launch(self):
+    name = self.endpoint.name+"-"+self.timestamp
+
     meh("launch",vars(self))
     remote = TerraformModule()
     cluster = lightcycle.pytf.dsl.TerraformDsl()
     cluster.variable(self.timestamp+"-live", default = "true")
     cluster.resource("aws_security_group",self.timestamp,
-      name = self.endpoint.name+"-"+self.timestamp,
+      name = name,
       ingress = [{
         "from_port": 22, #HACK
         "to_port": 22,
@@ -44,45 +46,119 @@ class Cluster():
         "cidr_blocks": ["0.0.0.0/0"],
       }],
     )
-    meh("aws_launch_configuration not working yet")
+    cluster.resource("aws_iam_policy",self.timestamp,
+      policy = '''
+      {
+        "Version":"2012-10-17",
+        "Statement": [
+          {
+            "Action": [
+              "autoscaling:Describe*",
+              "ec2:Describe*",
+              "ec2:List*"
+            ],
+            "Effect": "Allow",
+            "Resource": "*"
+          }
+        ]
+      }
+      '''.replace("\n      ","\n").strip()
+    )
+    cluster.data("aws_iam_policy_document",self.timestamp,
+      statement = [{
+        "actions": ["sts:AssumeRole"],
+        "principals": [{
+          "type": "Service",
+          "identifiers": [ "ec2.amazonaws.com" ],
+        }],
+      }]
+    )
+    cluster.resource("aws_iam_role",self.timestamp,
+      name = name,
+      path = "/system/",
+      assume_role_policy = "${data.aws_iam_policy_document."+self.timestamp+".json}",
+    )
+    cluster.resource("aws_iam_role_policy_attachment",self.timestamp,
+      role = "${aws_iam_role."+self.timestamp+".name}",
+      policy_arn = "${aws_iam_policy."+self.timestamp+".arn}",
+    )
+    cluster.resource("aws_iam_instance_profile",self.timestamp,
+      name = name,
+      role = "${aws_iam_role."+self.timestamp+".name}",
+    )
     cluster.resource("aws_launch_configuration", self.timestamp,
-      name = self.endpoint.name+"-"+self.timestamp,
+      name = name,
 
       image_id = "ami-a10d9db7", # HACK
       instance_type = "r3.large", # HACK
       key_name = "temujin9", # HACK
       security_groups = [ "${aws_security_group."+self.timestamp+".name}" ],
+      iam_instance_profile = "${aws_iam_instance_profile."+self.timestamp+".name}",
 
       user_data = '''
-        #!/bin/env python3
-        import urllib.request
+        #!/usr/bin/env python3
+        import subprocess
+        import time
 
         def meh(*args):
           print("MEH: "+str(args))
 
-        installer="/tmp/install-flynn"
-        urllib.request.urlretrieve("https://dl.flynn.io/install-flynn",installer) # FIXME: This is the spot blocked by SG stuff?
-        print("retrieved installer")
-        meh("chmod +x $install")
-        result = subprocess.run([installer], cwd="/root")
-        meh("until successful")
-        meh("zpool device")
-        if result.returncode !=0: raise Exception(action, result)
+        def run_and_return(*args, cwd="/root"):
+          return ( subprocess.run(args, cwd=cwd).returncode == 0 )
 
-        meh("get initial peers from ASG")
-        initial_peers = ",".join([ "127.0.0.1" ])
-        result = subprocess.run(["flynn-host","init","--peer-ips",initial_peers], cwd="/root")
-        if result.returncode !=0: raise Exception(action, result)
+        def try_try_again(f, tries=0):
+          tried = 0
+          while True:
+            tried += 1
+            time.sleep(30)
+            try:
+              result = f()
+              if result:
+                return True
+              else:
+                raise Exception("Failed to {{0}} (tried {{1}} times)".format(args, tries))
+            except Exception as e:
+              if tries == tried:
+                raise e
+              print(e)
 
-        result = subprocess.run(["systemctl","start","flynn-host"], cwd="/root")
-        if result.returncode !=0: raise Exception(action, result)
-      '''.replace("        ","").strip()+"\n",
+        def find_ip_addresses():
+          boto3.setup_default_session(region_name="us-east-1")
+          asg = boto3.client("autoscaling").describe_auto_scaling_groups(AutoScalingGroupNames=[name])["AutoScalingGroups"][0]
+          instances = [ i["InstanceId"] for i in asg["Instances"] ]
+          ec2 = boto3.resource("ec2")
+          addresses = [ ec2.Instance(i).private_ip_address for i in instances ]
+          if len(addresses) > 1:
+            return addresses
+          elif len(addresses) == 1:
+            raise Exception("Only found myself? A cluster should have more than one address.")
+          else:
+            raise Exception("No addresses found . . . curious.")
+
+
+        name = "{name}"
+
+        print("\\n\\n# Installing prerequisites #")
+        try_try_again(run_and_return("apt","install","python3-pip","--yes"))
+        try_try_again(run_and_return("pip3","install","boto3"))
+        import boto3
+
+        print("\\n\\n# Looking for other members of this cluster #")
+        addresses = try_try_again(find_ip_addresses())
+        print("Found: {{0}}".format(addresses))
+
+        print("\\n\\n# Initializing cluster #")
+        try_try_again(run_and_return("flynn-host","init","--peer-ips",",".join(addresses)), tries=3)
+        try_try_again(run_and_return("systemctl","start","flynn-host"))
+        print("Initialized {{0}} cluster".format(name))
+      '''.format(name=name).replace("\n        ","\n").strip()+"\n", # Cleanup indenting
     )
     cluster.resource("aws_autoscaling_group", self.timestamp,
+      name = name,
+
       availability_zones = [ self.az ],
-      name = self.endpoint.name+"-"+self.timestamp,
-      max_size = 0,
-      min_size = 0,
+      max_size = 1,
+      min_size = 1,
       launch_configuration = "${aws_launch_configuration."+self.timestamp+".name}",
     )
     cluster.output(self.timestamp+"-asg",value = "${aws_autoscaling_group."+self.timestamp+".id}")

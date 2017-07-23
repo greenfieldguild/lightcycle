@@ -20,7 +20,7 @@ class TerraformDsl(Tree):
   def __init__(self, *args):
     Tree.__init__(self, *args)
 
-  # Each one of these takes approximately the same call sign; there's little value in breaking them out,
+  # Each one of these takes the same call sign; there's little value in breaking them out separately
   for noun in ["data","module","output","provider","providers","resource","terraform","variable"]:
     # Wrap and call the outer lambda now, to bind the noun correctly into the callsign
     locals()[noun] = (lambda noun=noun: lambda self, *path, **values: self.add(noun,*path,**values))()
@@ -28,7 +28,7 @@ class TerraformDsl(Tree):
   #def provider(self, id, **config):
     ## FIXME: https://www.terraform.io/docs/configuration/providers.html#multiple-provider-instances
     ## Naive implementation just merges
-    #_tree.add('provider', id, **config)
+    #self.add('provider', id, **config)
     #return;
 
   def json(self):
