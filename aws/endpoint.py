@@ -26,6 +26,7 @@ class Cluster():
 
   def launch(self):
     name = self.endpoint.name+"-"+self.timestamp
+    domain = "greenfieldguild.com" # HACK
 
     meh("launch",vars(self))
     remote = TerraformModule()
@@ -34,10 +35,25 @@ class Cluster():
     cluster.resource("aws_security_group",self.timestamp,
       name = name,
       ingress = [{
-        "from_port": 22, #HACK
+        "from_port": 22,
         "to_port": 22,
         "protocol": "tcp",
         "cidr_blocks": ["0.0.0.0/0"],   #HACK
+      },{
+        "from_port": 80,
+        "to_port": 80,
+        "protocol": "tcp",
+        "security_groups": [ "${aws_elb.socket.source_security_group_id}" ],
+      },{
+        "from_port": 443,
+        "to_port": 443,
+        "protocol": "tcp",
+        "security_groups": [ "${aws_elb.socket.source_security_group_id}" ],
+      },{
+        "from_port": 0,
+        "to_port": 0,
+        "protocol": -1,
+        "self": True,
       }],
       egress = [{
         "from_port": 0,
@@ -96,9 +112,11 @@ class Cluster():
       iam_instance_profile = "${aws_iam_instance_profile."+self.timestamp+".name}",
 
       user_data = '''
-        #!/usr/bin/env python3
+        #!/usr/bin/python3 -u
+        import os
         import subprocess
         import time
+        import urllib.request
 
         def retry(tries=0, delay=60):
           def tryIt(func):
@@ -116,7 +134,7 @@ class Cluster():
           return tryIt
 
         @retry(tries=10)
-        def find_ip_addresses():
+        def find_cluster_ips():
           boto3.setup_default_session(region_name="us-east-1")
           asg = boto3.client("autoscaling").describe_auto_scaling_groups(AutoScalingGroupNames=[name])["AutoScalingGroups"][0]
           ec2 = boto3.resource("ec2")
@@ -130,26 +148,57 @@ class Cluster():
             raise Exception("No addresses found . . . curious.")
 
         @retry(tries=10)
-        def assert_run(*args, cwd="/root"):
-          returncode = subprocess.run(args, cwd=cwd).returncode
+        def find_my_ip():
+          return urllib.request.urlopen('http://169.254.169.254/latest/meta-data/local-ipv4').read().decode()
+
+        @retry(tries=10)
+        def run_retry(*args, cwd="/root", **kwargs):
+          run(*args, cwd=cwd, **kwargs)
+
+        def run(*args, **kwargs):
+          returncode = subprocess.run(args, **kwargs).returncode
           if returncode != 0: raise Exception("Tried {{0}}, returned {{1}}".format(args,returncode))
+
+        def bootstrap_or_debug(ips):
+          try:
+            os.environ["CLUSTER_DOMAIN"] = "{domain}"
+            run("flynn-host","bootstrap","--timeout",str(90*60),"--peer-ips",",".join(ips),)
+          except Exception as e:
+            print("Hit an issue with bootstrapping: {{0}}".format(e))
+            run("flynn-host","collect-debug-info") # FIXME: Currently uses gist
+            raise e
+
 
         name = "{name}"
 
         print("\\n\\n# Installing prerequisites #")
-        assert_run("apt","install","python3-pip","--yes")
-        assert_run("pip3","install","boto3")
+        time.sleep(1) # HACK: Not sure why we have this race condition with print . . .
+        run_retry("apt-get","install","python3-pip","--yes")
+        run_retry("pip3","install","boto3")
         import boto3
 
-        print("\\n\\n# Looking for other members of this cluster #", flush=True)
-        addresses = find_ip_addresses()
-        print("Found: {{0}}".format(addresses), flush=True)
+        print("\\n\\n# Looking for cluster IP addresses#", flush=True)
+        my_ip = find_my_ip()
+        print("My IP: {{0}}".format(my_ip), flush=True)
+        ips = find_cluster_ips()  # TODO: ensure this returns in launch order
+        print("Cluster IPs: {{0}}".format(ips), flush=True)
 
-        print("\\n\\n# Initializing cluster #", flush=True)
-        assert_run("flynn-host","init","--peer-ips",",".join(addresses))
-        assert_run("systemctl","start","flynn-host")
-        print("Initialized {{0}} cluster".format(name), flush=True)
-      '''.format(name=name).replace("\n        ","\n").strip()+"\n", # Cleanup indenting
+        print("\\n\\n# Initializing host #", flush=True)
+        run_retry("flynn-host","init","--peer-ips",",".join(ips))
+        run_retry("systemctl","start","flynn-host")
+        print("Initialized {{0}} host".format(name), flush=True)
+
+        print("\\n\\n# Cluster Bootstrap #", flush=True)
+        if my_ip == ips[0]:
+          print("I'm the first node, so I'll bootstrap", flush=True)
+          bootstrap_or_debug(ips)
+        else:
+          print("I'm not the first node; doing nothing", flush=True)
+
+        print("Check for new peers, update Flynn's peer table here?", flush=True)
+        print("Update cluster paths to Flynn's core apps here?", flush=True)
+
+      '''.format(name=name, domain=domain).replace("\n        ","\n").strip()+"\n", # Cleanup indenting
     )
     cluster.resource("aws_autoscaling_group", self.timestamp,
       name = name,
@@ -232,11 +281,11 @@ class Endpoint():
           "instance_protocol":  "http",
           "lb_port":            80,
           "lb_protocol":        "http",
-        #},{
-          #"instance_port":      443,
-          #"instance_protocol":  "tcp",
-          #"lb_port":            443,
-          #"lb_protocol":        "tcp",
+        },{
+          "instance_port":      443,
+          "instance_protocol":  "tcp",
+          "lb_port":            443,
+          "lb_protocol":        "tcp",
       }],
       #health_check = {
         #"healthy_threshold":    2,
