@@ -1,17 +1,14 @@
 import json
 import copy
 
-## TODO: Turn this into an easier to address data system?
-class TerraformLocalState(dict):
-  def __init__(self, path):
+class TerraformState(dict):
+  def __init__(self, json_obj):
     dict.__init__(self, [])
-    statefile = open(path)
-    self.update(json.load(statefile))
-    statefile.close()
+    self.update(json_obj)
     self.modules = {}
     for module in self["modules"]:
       path = '/'.join(module["path"])
-      self.modules[path] = Module(module)
+      self.modules[path] = TerraformStateModule(module)
 
   def pretty(self):
     rows = []
@@ -30,7 +27,12 @@ class TerraformLocalState(dict):
       rows.append("")
     return "\n".join(rows)
 
-class Module(dict):
+class TerraformLocalState(TerraformState):
+  def __init__(self, path):
+    with open(path) as statefile:
+      TerraformState.__init__(self, json.load(statefile))
+
+class TerraformStateModule(dict):
   def __init__(self, args):
     dict.__init__(self, [])
     self.update(copy.deepcopy(args))

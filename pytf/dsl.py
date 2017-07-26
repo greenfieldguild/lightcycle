@@ -1,5 +1,8 @@
-import sys
 import json
+import subprocess
+import sys
+
+import boto3 # FIXME: move this somewhere aws specific
 
 class Tree(dict):
   def __init__(self, *args):
@@ -33,3 +36,42 @@ class TerraformDsl(Tree):
 
   def json(self):
     return json.dumps(self)
+
+class TerraformModule():
+  def __init__(self):
+    self.templates = {}
+
+  def add(self, name, template):
+    # TODO: validate template as TerraformDsl
+    self.templates[name] = template
+
+  def upload(self, name="", bucket="", prefix=""):
+    if name == "":
+      targets = self.templates
+    elif name in self.templates:
+      targets = { name: self.templates[name] }
+    else:
+      raise Exception("No template named "+name+", cannot continue.")
+    s3 = boto3.resource('s3')
+    for name, template in targets.items():
+      path = prefix+"/"+name+".tf.json" if prefix else name+".tf.json"
+      s3.Object(bucket, path).put(Body=template.json())
+
+  def write(self, directory=""):
+    if directory:
+      self.directory = directory
+    if not self.directory:
+      raise Exception("Cannot write out module without a directory")
+    for name, template in self.templates.items():
+      f = open(self.directory+"/"+name+".tf.json","w")
+      f.write(template.json())
+      f.close()
+
+  def apply(self):
+    actions = [ [ "terraform","get","-update=true" ],
+                [ "terraform","init","-force-copy" ],
+                [ "terraform","apply" ] ]
+    for action in actions:
+      result = subprocess.run(action, cwd=self.directory)
+      if result.returncode !=0: raise Exception(action, result)
+

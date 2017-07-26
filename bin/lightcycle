@@ -97,17 +97,24 @@ def init(org="", endpoint="sandbox", path="", default=False, force=False):
 
 @cli.command()
 @click.option("-e", "--endpoint", is_eager=True, default=default_endpoint, help="Endpoint name")
+@click.option("--none", is_flag=True, help="Only demote the current cluster (DANGEROUS)")
 @click.option("-t", "--timestamp", help="Cluster timestamp to promote")
-def promote(endpoint="", timestamp="", **args):
+def promote(endpoint="", none=False, timestamp="", **args):
   """Promote a cluster"""
   ept = Endpoint.load_local(endpoint)
+  clusters = ept.clusters()
 
-  if not timestamp:
-    meh("find the right timestamp to promote", endpoint)
+  if none:
+    ept.delete_plug()
   else:
-    meh("verify timestamp", timestamp, endpoint)
-
-  ept.write_plug(timestamp)
+    if not timestamp:
+      timestamps = sorted(ept.clusters().keys())
+      if not timestamps:
+        raise Exception("No clusters found for "+endpoint)
+      timestamp = timestamps[-1] # The most recent is last
+    elif not timestamp in clusters:
+      raise Exception("No "+endpoint+"-"+timestamp+" cluster found")
+    ept.write_plug(timestamp)
   ept.tf_apply()
 
 @cli.command()
