@@ -11,21 +11,6 @@ from lightcycle.meh import meh,fail
 from lightcycle.aws.endpoint import Endpoint
 import os
 
-def header(s):
-  click.secho("\n# "+s+" #", bold=True)
-
-@click.group()
-def cli():
-  pass
-
-@cli.command()
-@click.option("-e", "--endpoint", help="Endpoint name")
-def create(endpoint="default"):
-  """Launch a new cluster"""
-  ept = Endpoint.load_local(endpoint)
-  cluster = ept.prepare_cluster()
-  cluster.launch()
-
 def default_org():
   return os.environ["LIGHTCYCLE_ORG"] if "LIGHTCYCLE_ORG" in os.environ else None
 
@@ -43,11 +28,27 @@ def validate_path(ctx,param,value):
   if not (value or default_path()): fail("Please specify at least one of --org or --path")
   return value
 
+def header(s):
+  click.secho("\n# "+s+" #", bold=True)
+
+
+@click.group()
+def cli():
+  pass
+
+@cli.command()
+@click.option("-e", "--endpoint", help="Endpoint name")
+def create(endpoint="default"):
+  """Launch a new cluster"""
+  ept = Endpoint.load_local(endpoint)
+  cluster = ept.prepare_cluster()
+  cluster.launch()
+
 @cli.command()
 @click.option("-o", "--org", is_eager=True, default=default_org, help="Organization prefix")
 @click.option("-e", "--endpoint", is_eager=True, default=default_endpoint, help="Endpoint name")
 @click.option("-p","--path", callback=validate_path, help="Backend path")
-def connect(org="", endpoint="sandbox", path=""):
+def config(org="", endpoint="sandbox", path=""):
   """Configure connection to an existing endpoint"""
   path = path if path else default_path()
   ept = Endpoint.from_path(endpoint, path)
@@ -56,10 +57,28 @@ def connect(org="", endpoint="sandbox", path=""):
   click.echo("Connected to "+endpoint+" endpoint at "+path)
 
 @cli.command()
-@click.option("-e", "--endpoint", help="Endpoint name")
-def destroy(**args):
+@click.option("--all", "all_flag", is_flag=True, help="Removed all unused clusters for this endpoint")
+@click.option("-e", "--endpoint", is_eager=True, default=default_endpoint, help="Endpoint name")
+@click.option("-t", "--timestamp", help="Cluster timestamp")
+def destroy(all_flag = False, timestamp=None, endpoint="sandbox"):
   """Destroy an unused cluster"""
-  meh("destroy", **args)
+  ept = Endpoint.load_local(endpoint)
+
+  if not timestamp and not all_flag:
+    raise Exception("One of --timestamp or --all is requred.")
+  elif timestamp and all_flag:
+    raise Exception("The --all flag is incompatible with --timestamp, please use only one.")
+
+  clusters = ept.clusters()
+  if timestamp:
+    if timestamp in clusters:
+      clusters = { timestamp: clusters[timestamp] }
+    else:
+      raise Exception("The "+endpoint+"-"+timestamp+" cluster was not found.")
+
+  for timestamp, cluster in clusters.items():
+    cluster.teardown()
+    click.echo("Removed "+endpoint+"-"+timestamp+" cluster")
 
 @cli.command()
 @click.option("-o", "--org", is_eager=True, default=default_org, help="Organization prefix")
@@ -67,7 +86,7 @@ def destroy(**args):
 @click.option("-p","--path", prompt="Backend path", default=default_path, callback=validate_path, help="Backend path")
 @click.option("--default", is_flag=True, help="Make this the default endpoint")
 @click.option("--force", is_flag=True, help="Force a reinitialization (DANGEROUS)")
-def init(org="", endpoint="sandbox", default=False, force=False):
+def init(org="", endpoint="sandbox", path="", default=False, force=False):
   """Initialize a new endpoint"""
   header("Initializing the "+endpoint+" endpoint")
   ept = Endpoint.from_path(endpoint, path)
@@ -77,10 +96,19 @@ def init(org="", endpoint="sandbox", default=False, force=False):
   ept.tf_apply()
 
 @cli.command()
-@click.option("-e", "--endpoint", help="Endpoint name")
-def promote(**args):
+@click.option("-e", "--endpoint", is_eager=True, default=default_endpoint, help="Endpoint name")
+@click.option("-t", "--timestamp", help="Cluster timestamp to promote")
+def promote(endpoint="", timestamp="", **args):
   """Promote a cluster"""
-  meh("promote", args)
+  ept = Endpoint.load_local(endpoint)
+
+  if not timestamp:
+    meh("find the right timestamp to promote", endpoint)
+  else:
+    meh("verify timestamp", timestamp, endpoint)
+
+  ept.write_plug(timestamp)
+  ept.tf_apply()
 
 @cli.command()
 @click.option("-a", "--all", "show_all", is_flag=True, help="Show status from all endpoints")

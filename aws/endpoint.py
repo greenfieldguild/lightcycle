@@ -3,7 +3,9 @@ import botocore.exceptions
 import click
 from lightcycle.meh import meh,fail
 import lightcycle.pytf.dsl
+import lightcycle.aws.state
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,17 +25,21 @@ class Cluster():
     self.timestamp = timestamp
     self.az = "us-east-1a" # HACK
     self.region = "us-east-1" # HACK
+    self.domain = "greenfieldguild.com" # HACK
+    self.instance_type = "r3.large" # HACK
+    self.key_name = "temujin9" # HACK
+    self.asg_size = 0
+
+  def name(self):
+    return self.endpoint.name+"-"+self.timestamp
 
   def launch(self):
-    name = self.endpoint.name+"-"+self.timestamp
-    domain = "greenfieldguild.com" # HACK
-
     meh("launch",vars(self))
     remote = TerraformModule()
-    cluster = lightcycle.pytf.dsl.TerraformDsl()
-    cluster.variable(self.timestamp+"-live", default = "true")
-    cluster.resource("aws_security_group",self.timestamp,
-      name = name,
+    dsl = lightcycle.pytf.dsl.TerraformDsl()
+    dsl.variable(self.timestamp+"-live", default = "true")
+    dsl.resource("aws_security_group",self.timestamp,
+      name = self.name(),
       ingress = [{
         "from_port": 22,
         "to_port": 22,
@@ -62,7 +68,7 @@ class Cluster():
         "cidr_blocks": ["0.0.0.0/0"],
       }],
     )
-    cluster.resource("aws_iam_policy",self.timestamp,
+    dsl.resource("aws_iam_policy",self.timestamp,
       policy = '''
       {
         "Version":"2012-10-17",
@@ -80,7 +86,7 @@ class Cluster():
       }
       '''.replace("\n      ","\n").strip()
     )
-    cluster.data("aws_iam_policy_document",self.timestamp,
+    dsl.data("aws_iam_policy_document",self.timestamp,
       statement = [{
         "actions": ["sts:AssumeRole"],
         "principals": [{
@@ -89,28 +95,25 @@ class Cluster():
         }],
       }]
     )
-    cluster.resource("aws_iam_role",self.timestamp,
-      name = name,
+    dsl.resource("aws_iam_role",self.timestamp,
+      name = self.name(),
       path = "/system/",
       assume_role_policy = "${data.aws_iam_policy_document."+self.timestamp+".json}",
     )
-    cluster.resource("aws_iam_role_policy_attachment",self.timestamp,
+    dsl.resource("aws_iam_role_policy_attachment",self.timestamp,
       role = "${aws_iam_role."+self.timestamp+".name}",
       policy_arn = "${aws_iam_policy."+self.timestamp+".arn}",
     )
-    cluster.resource("aws_iam_instance_profile",self.timestamp,
-      name = name,
+    dsl.resource("aws_iam_instance_profile",self.timestamp,
+      name = self.name(),
       role = "${aws_iam_role."+self.timestamp+".name}",
     )
-    cluster.resource("aws_launch_configuration", self.timestamp,
-      name = name,
-
-      image_id = "ami-a10d9db7", # HACK
-      instance_type = "r3.large", # HACK
-      key_name = "temujin9", # HACK
+    dsl.resource("aws_launch_configuration", self.timestamp,
+      image_id = "ami-a10d9db7", # HACK: find this from AWS via TF data
+      instance_type = self.instance_type,
+      key_name = self.key_name,
       security_groups = [ "${aws_security_group."+self.timestamp+".name}" ],
       iam_instance_profile = "${aws_iam_instance_profile."+self.timestamp+".name}",
-
       user_data = '''
         #!/usr/bin/python3 -u
         import os
@@ -172,7 +175,6 @@ class Cluster():
         name = "{name}"
 
         print("\\n\\n# Installing prerequisites #")
-        time.sleep(1) # HACK: Not sure why we have this race condition with print . . .
         run_retry("apt-get","install","python3-pip","--yes")
         run_retry("pip3","install","boto3")
         import boto3
@@ -198,21 +200,34 @@ class Cluster():
         print("Check for new peers, update Flynn's peer table here?", flush=True)
         print("Update cluster paths to Flynn's core apps here?", flush=True)
 
-      '''.format(name=name, domain=domain).replace("\n        ","\n").strip()+"\n", # Cleanup indenting
+      '''.format(name=self.name(), domain=self.domain).replace("\n        ","\n").strip()+"\n", # Cleanup indenting
     )
-    cluster.resource("aws_autoscaling_group", self.timestamp,
-      name = name,
-
+    dsl.resource("aws_autoscaling_group", self.timestamp,
+      name = self.name(),
       availability_zones = [ self.az ],
-      max_size = 3,
-      min_size = 3,
+      max_size = self.asg_size,
+      min_size = self.asg_size,
       launch_configuration = "${aws_launch_configuration."+self.timestamp+".name}",
     )
-    cluster.output(self.timestamp+"-asg",value = "${aws_autoscaling_group."+self.timestamp+".id}")
-    cluster.output(self.timestamp+"-live",value = "${var."+self.timestamp+"-live}")
-    remote.add(self.timestamp, cluster)
+    dsl.output(self.timestamp+"-asg",value = "${aws_autoscaling_group."+self.timestamp+".id}")
+    dsl.output(self.timestamp+"-live",value = "${var."+self.timestamp+"-live}")
+    remote.add(self.timestamp, dsl)
     remote.upload(bucket=self.endpoint.root, prefix=self.endpoint.prefix)
     self.endpoint.tf_apply()
+
+  def teardown(self):
+    meh("Set the cluster teardown flag, and apply once")
+    state = lightcycle.aws.state.TerraformS3State(self.endpoint.root, self.endpoint.prefix+"/endpoint.tfstate")
+    if state.modules["root/endpoint"].outputs["live"] == self.timestamp:
+      raise Exception("Cannot teardown plugged-in cluster: "+self.timestamp)
+
+    objs = boto3.resource('s3').Bucket(self.endpoint.root).objects
+    cluster_obj = objs.filter(Prefix=self.endpoint.prefix+"/"+self.timestamp+".tf.json")
+    status = cluster_obj.delete()[0]["ResponseMetadata"]["HTTPStatusCode"]
+    if not status in [ 200, 204 ]:
+      raise Exception("Unexpected status: "+str(status))
+    self.endpoint.tf_apply()
+
 
 class Endpoint():
   def load_local(name):
@@ -252,8 +267,6 @@ class Endpoint():
     core.variable("remove", default = "")
     core.variable("promote", default = "")
     core.provider("aws", region = self.region)
-    #core.data("terraform_remote_state") # FIXME?
-    core.output("live", value = "") # FIXME, should be TF for 'var.promote or previous value'
     remote.add("core", core)
 
     socket = lightcycle.pytf.dsl.TerraformDsl()
@@ -296,15 +309,16 @@ class Endpoint():
       #}
     )
     remote.add("socket", socket)
+    remote.upload(bucket=self.root, prefix=self.prefix)
 
+  def write_plug(self,timestamp):
+    remote = TerraformModule()
     plug = lightcycle.pytf.dsl.TerraformDsl()
-    meh("Populate plug.tf.json")
-    #plug.resource("aws_autoscaling_attachment","plug",
-      #count = 0 # HACK, replace with calc based on remote state / promote
-      #autoscaling_group_name  = "${aws_autoscaling_group.asg.id}", # FIXME - TF for "var.promote or previous live"?
-      #elb                     = "${aws_elb.socket.id}",
-    #)
-    #plug.output("live", value = "") # FIXME, should be TF for 'var.promote or previous value'
+    plug.resource("aws_autoscaling_attachment","plug",
+      autoscaling_group_name  = "${aws_autoscaling_group."+timestamp+".id}",
+      elb                     = "${aws_elb.socket.id}",
+    )
+    plug.output("live", value = timestamp)
     remote.add("plug", plug)
     remote.upload(bucket=self.root, prefix=self.prefix)
 
@@ -349,6 +363,21 @@ class Endpoint():
       if os.path.lexists(default_dir):
         os.remove(default_dir)
       os.symlink(config.directory, default_dir)
+
+  def clusters(self):
+    """Return timestamp indexed array of all clusters from endpoint"""
+    objs = boto3.resource('s3').Bucket(self.root).objects.filter(Prefix=self.prefix)
+    timestamps = []
+    result = {}
+    for obj in objs:
+      pattern = self.prefix+"/(\d{8}T\d{6}).tf.json$"
+      timestamp_match = re.match(self.prefix+"/(\d{8}T\d{6}).tf.json$",obj.key)
+      if not timestamp_match:
+        continue
+      timestamps.append(timestamp_match.group(1))
+    for timestamp in timestamps:
+      result[timestamp] = Cluster(self, timestamp)
+    return result
 
   def tf_apply(self):
     """Run terraform apply against local config"""
