@@ -3,7 +3,7 @@ import botocore.exceptions
 import click
 from lightcycle.meh import meh,fail
 import lightcycle.pytf.dsl
-import lightcycle.aws.state
+import lightcycle.pytf.aws.state
 import os
 import re
 import shutil
@@ -216,8 +216,9 @@ class Cluster():
     self.endpoint.tf_apply()
 
   def teardown(self):
+    """Remove this cluster"""
     meh("Set the cluster teardown flag, and apply once")
-    state = lightcycle.aws.state.TerraformS3State(self.endpoint.root, self.endpoint.prefix+"/endpoint.tfstate")
+    state = lightcycle.pytf.aws.state.TerraformS3State(self.endpoint.root, self.endpoint.prefix+"/endpoint.tfstate")
     if state.modules["root/endpoint"].outputs["live"] == self.timestamp:
       raise Exception("Cannot teardown plugged-in cluster: "+self.timestamp)
 
