@@ -21,22 +21,24 @@ class Cluster():
     self.instance_type = "r3.large" # HACK
     self.key_name = "temujin9" # HACK
     self.asg_size = 0 # HACK
+    self.ssh_ingress = {"cidr_blocks": ["0.0.0.0/0"]} # HACK
 
   def name(self):
     return self.endpoint.name+"-"+self.timestamp
 
   def launch(self):
-    meh("launch",vars(self))
     remote = TerraformModule()
     dsl = TerraformDsl()
     dsl.variable(self.timestamp+"-live", default = "true")
     dsl.resource("aws_security_group",self.timestamp,
       name = self.name(),
       ingress = [{
-        "from_port": 22,
-        "to_port": 22,
-        "protocol": "tcp",
-        "cidr_blocks": ["0.0.0.0/0"],   #HACK
+        **{
+          "from_port": 22,
+          "to_port": 22,
+          "protocol": "tcp",
+        },
+        **self.ssh_ingress,
       },{
         "from_port": 80,
         "to_port": 80,
@@ -87,6 +89,12 @@ class Cluster():
         }],
       }]
     )
+    # FIXME: This may be fragile on update; get via boto and reify instead?
+    dsl.data("aws_ami",self.timestamp,
+      most_recent = True,
+      owners = ["189206602883"],
+      name_regex = "^flynn-v\\d{8}.\\d-ubuntu-\\w+-\\d{10}"
+    )
     dsl.resource("aws_iam_role",self.timestamp,
       name = self.name(),
       path = "/system/",
@@ -101,7 +109,7 @@ class Cluster():
       role = "${aws_iam_role."+self.timestamp+".name}",
     )
     dsl.resource("aws_launch_configuration", self.timestamp,
-      image_id = "ami-a10d9db7", # HACK: find this from AWS via TF data
+      image_id = "${data.aws_ami."+self.timestamp+".id}",
       instance_type = self.instance_type,
       key_name = self.key_name,
       security_groups = [ "${aws_security_group."+self.timestamp+".name}" ],
