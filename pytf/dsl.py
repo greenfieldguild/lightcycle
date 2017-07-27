@@ -2,7 +2,7 @@ import json
 import subprocess
 import sys
 
-import boto3 # FIXME: move this somewhere aws specific
+import boto3
 
 from lightcycle.meh import meh,fail
 
@@ -32,7 +32,7 @@ class TerraformDsl(Tree):
 
   #def provider(self, id, **config):
     ## FIXME: https://www.terraform.io/docs/configuration/providers.html#multiple-provider-instances
-    ## Naive implementation just merges
+    ## Current naive implementation just merges
     #self.add('provider', id, **config)
     #return;
 
@@ -47,6 +47,7 @@ class TerraformModule():
     meh("validate template as TerraformDsl")
     self.templates[name] = template
 
+  meh("TerraformModule shouldn't be responsible for upload?"
   def upload(self, name="", bucket="", prefix=""):
     if name == "":
       targets = self.templates

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-# FIXME: http://marthall.github.io/blog/how-to-package-a-python-app/
 import sys
-sys.path.insert(0,"/home/temujin9/Projects/Greenfield_Guild/code/") # HACK
+sys.path.insert(0,"/home/temujin9/Projects/Greenfield_Guild/code/")
+from lightcycle.meh import meh,fail
+meh("http://marthall.github.io/blog/how-to-package-a-python-app/")
 
 import boto3
 import botocore.exceptions
 import click
 import colorama
-from lightcycle.meh import meh,fail
 from lightcycle.aws.endpoint import Endpoint
 import os
 

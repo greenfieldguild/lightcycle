@@ -10,8 +10,8 @@ class Backend():
     self.bucket = boto3.resource("s3").Bucket(root)
     self.root = root
     self.prefix = prefix
-    self.region = "us-east-1" # HACK
     meh("parameterize Backend with region")
+    self.region = "us-east-1"
 
   def table_exists(self):
     try:

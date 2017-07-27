@@ -15,14 +15,14 @@ class Cluster():
   def __init__(self, endpoint, timestamp):
     self.endpoint = endpoint
     self.timestamp = timestamp
-    self.az = "us-east-1a" # HACK
-    self.region = "us-east-1" # HACK
-    self.domain = "greenfieldguild.com" # HACK
-    self.instance_type = "r3.large" # HACK
-    self.key_name = "temujin9" # HACK
-    self.asg_size = 0 # HACK
-    self.ssh_ingress = {"cidr_blocks": ["0.0.0.0/0"]} # HACK
     meh("parameterize Cluster")
+    self.az = "us-east-1a"
+    self.region = "us-east-1"
+    self.domain = "greenfieldguild.com"
+    self.instance_type = "r3.large"
+    self.key_name = "temujin9"
+    self.asg_size = 0
+    self.ssh_ingress = {"cidr_blocks": ["0.0.0.0/0"]}
 
   def name(self):
     return self.endpoint.name+"-"+self.timestamp
@@ -90,7 +90,7 @@ class Cluster():
         }],
       }]
     )
-    # FIXME: This will be fragile on upstream update; get via boto and reify instead
+    meh("aws_ami is fragile on upstream update; get via boto and reify instead")
     dsl.data("aws_ami",self.timestamp,
       most_recent = True,
       owners = ["189206602883"],

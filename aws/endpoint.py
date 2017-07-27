@@ -36,10 +36,10 @@ class Endpoint():
     self.root = root
     self.prefix = prefix
     self.backend = Backend(self.root,self.prefix)
-    self.region = "us-east-1" # HACK
-    self.route53_zone = "greenfieldguild.com" # HACK
-    self.route53_record = "*.greenfieldguild.com" # HACK
     meh("parameterize Endpoint")
+    self.region = "us-east-1"
+    self.route53_zone = "greenfieldguild.com"
+    self.route53_record = "*.greenfieldguild.com"
 
   def find_latest(self):
     clusters = self.clusters()
