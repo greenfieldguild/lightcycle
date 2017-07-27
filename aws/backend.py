@@ -1,5 +1,7 @@
 import boto3
 
+from lightcycle.meh import meh,fail
+
 from lightcycle.pytf.dsl import TerraformDsl
 
 class Backend():
@@ -9,6 +11,7 @@ class Backend():
     self.root = root
     self.prefix = prefix
     self.region = "us-east-1" # HACK
+    meh("parameterize Backend with region")
 
   def table_exists(self):
     try:

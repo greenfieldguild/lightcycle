@@ -4,8 +4,6 @@ import copy
 
 from lightcycle.pytf.state import TerraformState
 
-from lightcycle.meh import meh,fail
-
 class TerraformS3State(TerraformState):
   def __init__(self, bucket, key):
     body = boto3.resource("s3").Object(bucket,key).get()["Body"].read().decode("ascii")

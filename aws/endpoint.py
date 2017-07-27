@@ -1,5 +1,5 @@
 import boto3
-import click # FIXME?
+import click
 import json
 import os
 import re
@@ -9,7 +9,6 @@ from lightcycle.meh import meh,fail
 from lightcycle.aws.cluster import Cluster
 from lightcycle.aws.backend import Backend
 from lightcycle.pytf.dsl import TerraformDsl, TerraformModule
-#from lightcycle.pytf.aws.state import TerraformS3State
 
 class Endpoint():
   def load_local(name):
@@ -21,7 +20,6 @@ class Endpoint():
     if not os.path.isdir(ept_config):
       raise Exception("Configuration not found for "+name+" endpoint; connect to it with 'lightcycle connect', or create it with 'lightcycle init'.")
 
-    # FIXME: This could probably be done cleaner with a tfstate read
     jcfg = json.load(open(os.path.join(ept_config,"endpoint.tf.json")))
     root = jcfg["terraform"]["backend"]["s3"]["bucket"]
     prefix = jcfg["terraform"]["backend"]["s3"]["key"][:-len("/endpoint.tfstate")]
@@ -39,6 +37,9 @@ class Endpoint():
     self.prefix = prefix
     self.backend = Backend(self.root,self.prefix)
     self.region = "us-east-1" # HACK
+    self.route53_zone = "greenfieldguild.com" # HACK
+    self.route53_record = "*.greenfieldguild.com" # HACK
+    meh("parameterize Endpoint")
 
   def find_latest(self):
     clusters = self.clusters()
@@ -62,7 +63,7 @@ class Endpoint():
 
     socket = TerraformDsl()
     socket.data("aws_route53_zone", "root",
-      name  = "greenfieldguild.com", # HACK, FIXME
+      name  = self.route53_zone,
     )
     subnets = []
     for az in ["us-east-1a","us-east-1b","us-east-1c"]:
@@ -72,7 +73,7 @@ class Endpoint():
       )
       subnets.append("${aws_default_subnet."+nodash+".id}")
     socket.resource("aws_route53_record", "socket",
-      name    = "*.greenfieldguild.com", # HACK, FIXME
+      name    = self.route53_record,
       type    = "CNAME",
       ttl     = "300",
       records = ["${aws_elb.socket.dns_name}"],

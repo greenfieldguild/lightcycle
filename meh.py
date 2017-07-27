@@ -11,7 +11,6 @@ def meh(*args):
   click.echo("MEH:\t\t"+str(args))
 
 def fail(explanation=""):
-  # TODO: Turn this into the catch response for cli()?
   failure = "FAIL:\t"+str(explanation)
   click.echo(failure)
   raise click.Abort(failure)

@@ -22,6 +22,7 @@ class Cluster():
     self.key_name = "temujin9" # HACK
     self.asg_size = 0 # HACK
     self.ssh_ingress = {"cidr_blocks": ["0.0.0.0/0"]} # HACK
+    meh("parameterize Cluster")
 
   def name(self):
     return self.endpoint.name+"-"+self.timestamp
@@ -89,7 +90,7 @@ class Cluster():
         }],
       }]
     )
-    # FIXME: This may be fragile on update; get via boto and reify instead?
+    # FIXME: This will be fragile on upstream update; get via boto and reify instead
     dsl.data("aws_ami",self.timestamp,
       most_recent = True,
       owners = ["189206602883"],
@@ -141,8 +142,8 @@ class Cluster():
           boto3.setup_default_session(region_name="us-east-1")
           asg = boto3.client("autoscaling").describe_auto_scaling_groups(AutoScalingGroupNames=[name])["AutoScalingGroups"][0]
           ec2 = boto3.resource("ec2")
-          instances = [ i["InstanceId"] for i in asg["Instances"] ]
-          addresses = [ ec2.Instance(i).private_ip_address for i in instances ]
+          instances = sorted([ ec2.Instance(i["InstanceId"]) for i in asg["Instances"] ], key=lambda i: i.launch_time)
+          addresses = [ i.private_ip_address for i in instances ]
           if len(addresses) > 1:
             return addresses
           elif len(addresses) == 1:
@@ -168,7 +169,7 @@ class Cluster():
             run("flynn-host","bootstrap","--timeout",str(90*60),"--peer-ips",",".join(ips),)
           except Exception as e:
             print("Hit an issue with bootstrapping: {{0}}".format(e))
-            run("flynn-host","collect-debug-info") # FIXME: Currently uses gist
+            run("flynn-host","collect-debug-info","--tarball")
             raise e
 
 
@@ -182,7 +183,7 @@ class Cluster():
         print("\\n\\n# Looking for cluster IP addresses#", flush=True)
         my_ip = find_my_ip()
         print("My IP: {{0}}".format(my_ip), flush=True)
-        ips = find_cluster_ips()  # TODO: ensure this returns in launch order
+        ips = find_cluster_ips()
         print("Cluster IPs: {{0}}".format(ips), flush=True)
 
         print("\\n\\n# Initializing host #", flush=True)

@@ -4,6 +4,8 @@ import sys
 
 import boto3 # FIXME: move this somewhere aws specific
 
+from lightcycle.meh import meh,fail
+
 class Tree(dict):
   def __init__(self, *args):
     dict.__init__(self, args)
@@ -42,7 +44,7 @@ class TerraformModule():
     self.templates = {}
 
   def add(self, name, template):
-    # TODO: validate template as TerraformDsl
+    meh("validate template as TerraformDsl")
     self.templates[name] = template
 
   def upload(self, name="", bucket="", prefix=""):
