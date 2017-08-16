@@ -47,7 +47,7 @@ class TerraformModule():
     meh("validate template as TerraformDsl")
     self.templates[name] = template
 
-  meh("TerraformModule shouldn't be responsible for upload?"
+  meh("TerraformModule shouldn't be responsible for upload?")
   def upload(self, name="", bucket="", prefix=""):
     if name == "":
       targets = self.templates

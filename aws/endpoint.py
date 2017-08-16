@@ -25,7 +25,7 @@ class Endpoint():
     prefix = jcfg["terraform"]["backend"]["s3"]["key"][:-len("/endpoint.tfstate")]
     return Endpoint(name, root, prefix)
 
-  def from_path(name,path):
+  def from_path(name, path):
     protocol,_,root,prefix = path.rstrip("/").split('/',3)
     if protocol != "s3:":
       raise Exception("Only equipped to do S3 at the moment")

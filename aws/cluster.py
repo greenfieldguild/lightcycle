@@ -91,6 +91,9 @@ class Cluster():
       }]
     )
     meh("aws_ami is fragile on upstream update; get via boto and reify instead")
+    #aws_ami = boto3.resource("ec2").Image()
+    #boto3.client("ec2").describe_images()
+
     dsl.data("aws_ami",self.timestamp,
       most_recent = True,
       owners = ["189206602883"],

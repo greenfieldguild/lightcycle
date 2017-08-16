@@ -1,8 +1,10 @@
 import boto3
+import botocore.exceptions
+import tempfile
 
 from lightcycle.meh import meh,fail
 
-from lightcycle.pytf.dsl import TerraformDsl
+from lightcycle.pytf.dsl import TerraformDsl, TerraformModule
 
 class Backend():
   def __init__(self, root, prefix):
